@@ -1,45 +1,48 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { signInWithEmailAndPassword } from "firebase/auth"
-import { auth } from "@/lib/firebase"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("trre@admin.oi")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
-  const router = useRouter()
+  const [email, setEmail] = useState("said@admin.com");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password)
-      router.push("/")
+      await signInWithEmailAndPassword(auth, email, password);
+      router.push("/");
     } catch (err: any) {
-      console.error("Login error:", err)
+      console.error("Login error:", err);
       if (err.code === "auth/invalid-credential") {
-        setError("البريد الإلكتروني أو كلمة المرور غير صحيحة")
+        setError("البريد الإلكتروني أو كلمة المرور غير صحيحة");
       } else if (err.code === "auth/user-not-found") {
-        setError("المستخدم غير موجود")
+        setError("المستخدم غير موجود");
       } else if (err.code === "auth/wrong-password") {
-        setError("كلمة المرور غير صحيحة")
+        setError("كلمة المرور غير صحيحة");
       } else if (err.code === "auth/too-many-requests") {
-        setError("تم تجاوز عدد المحاولات. يرجى المحاولة لاحقاً")
+        setError("تم تجاوز عدد المحاولات. يرجى المحاولة لاحقاً");
       } else {
-        setError("حدث خطأ أثناء تسجيل الدخول")
+        setError("حدث خطأ أثناء تسجيل الدخول");
       }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100" dir="rtl">
+    <div
+      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100"
+      dir="rtl"
+    >
       <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
         {/* Logo/Title */}
         <div className="text-center mb-8">
@@ -51,7 +54,10 @@ export default function LoginPage() {
         <form onSubmit={handleLogin} className="space-y-6">
           {/* Email */}
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="email"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               البريد الإلكتروني
             </label>
             <input
@@ -68,7 +74,10 @@ export default function LoginPage() {
 
           {/* Password */}
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="password"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               كلمة المرور
             </label>
             <input
@@ -106,5 +115,5 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
