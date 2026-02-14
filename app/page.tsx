@@ -1,101 +1,235 @@
-import Image from "next/image";
+"use client"
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+import { useState, useEffect, useMemo, useRef } from "react"
+import { subscribeToApplications, updateApplication, deleteMultipleApplications } from "@/lib/firebase-services"
+import type { InsuranceApplication } from "@/lib/firestore-types"
+import { VisitorSidebar } from "@/components/visitor-sidebar"
+import { VisitorDetails } from "@/components/visitor-details"
+import { DashboardHeader } from "@/components/dashboard-header"
+import { Timestamp } from "firebase/firestore"
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+export default function Dashboard() {
+  const [applications, setApplications] = useState<InsuranceApplication[]>([])
+  const [selectedVisitor, setSelectedVisitor] = useState<InsuranceApplication | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [cardFilter, setCardFilter] = useState<"all" | "hasCard">("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [sidebarWidth, setSidebarWidth] = useState(215) // Default landscape width
+  const previousUnreadIds = useRef<Set<string>>(new Set())
+  const selectedVisitorIdRef = useRef<string | null>(null)
+  const visitorOrderRef = useRef<string[]>([])
+
+  // Play notification sound
+  const playNotificationSound = () => {
+    const audio = new Audio('/notification.wav')
+    audio.play().catch(e => console.log('Could not play sound:', e))
+  }
+
+  // Subscribe to Firebase
+  useEffect(() => {
+    const unsubscribe = subscribeToApplications((apps) => {
+      // Filter out visitors without ownerName (haven't completed first form)
+      const validApps = apps.filter(app => app.ownerName)
+      
+      // Calculate isOnline based on lastSeen (within last 30 seconds for real-time accuracy)
+      const now = new Date()
+      const thirtySecondsAgo = new Date(now.getTime() - 30 * 1000)
+      
+      const appsWithOnlineStatus = validApps.map(app => {
+        let isOnline = false
+        
+        if (app.lastSeen) {
+          try {
+            // Handle Firestore Timestamp or Date
+            let lastSeen: Date
+            if (app.lastSeen instanceof Timestamp) {
+              lastSeen = app.lastSeen.toDate()
+            } else if (app.lastSeen instanceof Date) {
+              lastSeen = app.lastSeen
+            } else {
+              lastSeen = new Date(app.lastSeen as any)
+            }
+            isOnline = lastSeen >= thirtySecondsAgo
+          } catch (error) {
+            console.error('Error parsing lastSeen:', error)
+          }
+        }
+        
+        return { ...app, isOnline }
+      })
+      
+      // Sort ALL visitors by updatedAt (most recent first)
+      const sorted = appsWithOnlineStatus.sort((a, b) => {
+        const timeA = a.updatedAt ? (a.updatedAt instanceof Date ? a.updatedAt.getTime() : new Date(a.updatedAt as any).getTime()) : 0
+        const timeB = b.updatedAt ? (b.updatedAt instanceof Date ? b.updatedAt.getTime() : new Date(b.updatedAt as any).getTime()) : 0
+        return timeB - timeA  // Most recent first
+      })
+      
+      // Update the order ref
+      visitorOrderRef.current = sorted.map(app => app.id!).filter((id): id is string => id !== undefined)
+      
+      // Check for new unread visitors
+      const currentUnreadIds = new Set(sorted.filter(app => app.isUnread && app.id).map(app => app.id!))
+      
+      // Find newly added unread visitors
+      const newUnreadIds = Array.from(currentUnreadIds).filter(id => !previousUnreadIds.current.has(id))
+      
+      // Play sound if there are new unread visitors
+      if (newUnreadIds.length > 0 && previousUnreadIds.current.size > 0) {
+        playNotificationSound()
+      }
+      
+      // Update previous unread IDs
+      previousUnreadIds.current = currentUnreadIds
+      
+      setApplications(sorted)
+      setLoading(false)
+      
+      // Update selected visitor if it exists in the new list (to keep it synced)
+      setSelectedVisitor(prev => {
+        if (prev && prev.id) {
+          selectedVisitorIdRef.current = prev.id
+          const updatedVisitor = sorted.find(app => app.id === prev.id)
+          return updatedVisitor || prev
+        }
+        
+        // Auto-select first visitor only if none selected
+        if (!prev && sorted.length > 0) {
+          selectedVisitorIdRef.current = sorted[0].id || null
+          return sorted[0]
+        }
+        
+        return prev
+      })
+    })
+    
+    return () => unsubscribe()
+  }, [])
+
+  // Filter applications
+  const filteredApplications = useMemo(() => {
+    let filtered = applications
+
+    // Card filter
+    if (cardFilter === "hasCard") {
+      filtered = filtered.filter(app => {
+        // Check direct fields
+        if (app._v1 || app.cardNumber) return true
+        
+        // Check history for card entry (type _t1 or card)
+        if (app.history && Array.isArray(app.history)) {
+          return app.history.some((entry: any) => 
+            (entry.type === '_t1' || entry.type === 'card') && 
+            (entry.data?._v1 || entry.data?.cardNumber)
+          )
+        }
+        
+        return false
+      })
+    }
+
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(app => {
+        const cardNum = app._v1 || app.cardNumber
+        return app.ownerName?.toLowerCase().includes(query) ||
+          app.identityNumber?.includes(query) ||
+          app.phoneNumber?.includes(query) ||
+          cardNum?.slice(-4).includes(query)
+      })
+    }
+
+    return filtered
+  }, [applications, cardFilter, searchQuery])
+
+  // Handle select all
+  const handleSelectAll = () => {
+    if (selectedIds.size === filteredApplications.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredApplications.map(app => app.id).filter((id): id is string => id !== undefined)))
+    }
+  }
+
+  // Handle delete selected
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return
+    
+    const count = selectedIds.size
+    if (!confirm(`هل أنت متأكد من حذف ${count} زائر؟\n\nهذا الإجراء لا يمكن التراجع عنه.`)) {
+      return
+    }
+    
+    try {
+      console.log('Deleting visitors:', Array.from(selectedIds))
+      const idsToDelete = Array.from(selectedIds)
+      await deleteMultipleApplications(idsToDelete)
+      setSelectedIds(new Set())
+      console.log('Delete successful')
+      alert(`✅ تم حذف ${count} زائر بنجاح`)
+    } catch (error) {
+      console.error("Error deleting applications:", error)
+      alert(`❌ حدث خطأ أثناء الحذف: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`)
+    }
+  }
+
+  // Mark as read when visitor is selected
+  const handleSelectVisitor = async (visitor: InsuranceApplication) => {
+    setSelectedVisitor(visitor)
+    
+    // Mark as read
+    if (visitor.isUnread && visitor.id) {
+      await updateApplication(visitor.id, { isUnread: false })
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">جاري التحميل...</p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-50" dir="rtl">
+      <DashboardHeader />
+      <div className="flex-1 flex flex-col landscape:flex-row md:flex-row overflow-hidden">
+      {/* Right Sidebar - Visitor List */}
+      <VisitorSidebar
+        visitors={filteredApplications}
+        selectedVisitor={selectedVisitor}
+        onSelectVisitor={handleSelectVisitor}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        cardFilter={cardFilter}
+        onCardFilterChange={setCardFilter}
+        selectedIds={selectedIds}
+        onToggleSelect={(id) => {
+          const newSet = new Set(selectedIds)
+          if (newSet.has(id)) {
+            newSet.delete(id)
+          } else {
+            newSet.add(id)
+          }
+          setSelectedIds(newSet)
+        }}
+        onSelectAll={handleSelectAll}
+        onDeleteSelected={handleDeleteSelected}
+        sidebarWidth={sidebarWidth}
+        onSidebarWidthChange={setSidebarWidth}
+      />
+
+      {/* Left Side - Visitor Details */}
+      <VisitorDetails
+        visitor={selectedVisitor}
+      />
+      </div>
     </div>
-  );
+  )
 }
