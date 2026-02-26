@@ -6,7 +6,7 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("said@admin.com");
+  const [email, setEmail] = useState("hiertw@dag.com");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
